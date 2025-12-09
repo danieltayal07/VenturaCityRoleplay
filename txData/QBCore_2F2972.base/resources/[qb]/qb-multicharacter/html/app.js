@@ -1,214 +1,200 @@
-let re = "(" + profList.join("|") + ")\\b";
-const regTest = new RegExp(re, "i");
-
 document.addEventListener("DOMContentLoaded", () => {
+    if (typeof profList === 'undefined') var profList = [""];
+
     const viewmodel = new Vue({
         el: "#app",
-        vuetify: new Vuetify({ theme: { dark: true } }),
         data: {
             characters: [],
-            chardata: {},
-            show: {
-                loading: false,
-                characters: false,
-                register: false,
-                delete: false,
-            },
-            registerData: {
-                date: new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().substr(0, 10),
-                firstname: undefined,
-                lastname: undefined,
-                nationality: undefined,
-                gender: undefined,
-            },
-            allowDelete: false,
-            dataPickerMenu: false,
+            show: { loading: false, characters: false, register: false, delete: false },
+            
+            registerData: { date: "", firstname: "", lastname: "", nationality: "", gender: "Male" },
+            
+            currentTheme: '#FFD700',
+            weather: 'Sunny',
+            currentTime: '12:00',
+            myId: 0,
+            showNews: false,
+            isCinematic: false,
+            
+            isScanning: false,
+            scanText: "HOLD TO SCAN",
+            scanTimer: null,
+
+            // Audio Logic Updated
+            isPlaying: false,
+            audioEl: null,
+            // ADD YOUR SONGS HERE
+            songList: ["music1.mp3", "music2.mp3"], 
+            currentSongIndex: 0,
+            
             characterAmount: 0,
             loadingText: "",
             selectedCharacter: -1,
             dollar: Intl.NumberFormat("en-US"),
-            translations: {},
-            customNationality: false,
-            nationalities: [],
+            allowDelete: false
+        },
+        computed: {
+            currentSongName() { 
+                // Displays "Music 1" instead of "music1.mp3"
+                let name = this.songList[this.currentSongIndex].split('.')[0];
+                return name.charAt(0).toUpperCase() + name.slice(1).replace(/(\d+)/g, ' $1');
+            }
         },
         methods: {
-            click_character: function (idx, type) {
-                this.selectedCharacter = idx;
-
-                if (this.characters[idx] !== undefined) {
-                    axios.post("https://qb-multicharacter/cDataPed", {
-                        cData: this.characters[idx],
+            setTheme(color) {
+                this.currentTheme = color;
+                document.documentElement.style.setProperty('--primary', color);
+            },
+            changeCam(type) {
+                axios.post("https://qb-multicharacter/changeCamera", { type: type });
+            },
+            toggleCinematic() {
+                this.isCinematic = !this.isCinematic;
+            },
+            openLink(url) {
+                window.invokeNative('openUrl', url);
+            },
+            startScan() {
+                if(!this.registerData.firstname || !this.registerData.lastname) return;
+                this.isScanning = true;
+                this.scanText = "SCANNING...";
+                this.scanTimer = setTimeout(() => { this.create_character(); }, 2000);
+            },
+            stopScan() {
+                this.isScanning = false;
+                this.scanText = "HOLD TO SCAN";
+                clearTimeout(this.scanTimer);
+            },
+            
+            // --- AUDIO CONTROLS FIXED ---
+            initAudio() {
+                this.audioEl = document.getElementById("audio-player");
+                if(this.audioEl) {
+                    this.audioEl.volume = 0.15;
+                    this.audioEl.src = "sounds/" + this.songList[this.currentSongIndex]; // Ensure src is set
+                    // Try auto play, if blocked, wait for click
+                    this.audioEl.play().then(() => this.isPlaying = true).catch(() => {
+                        document.addEventListener('click', this.unlockAudio, { once: true });
                     });
+                }
+            },
+            unlockAudio() { if(this.audioEl) { this.audioEl.play(); this.isPlaying = true; } },
+            
+            toggleMusic() {
+                if(!this.audioEl) return;
+                if (this.isPlaying) {
+                    this.audioEl.pause();
+                } else {
+                    this.audioEl.play();
+                }
+                this.isPlaying = !this.isPlaying;
+            },
+            
+            nextSong() {
+                if(!this.audioEl) return;
+                // Increment index, loop back to 0 if at end
+                this.currentSongIndex = (this.currentSongIndex + 1) % this.songList.length;
+                this.audioEl.src = "sounds/" + this.songList[this.currentSongIndex];
+                
+                // If it was playing, keep playing. If paused, stay paused (or force play?)
+                // Usually better to force play on change
+                this.audioEl.play().then(() => {
+                    this.isPlaying = true;
+                }).catch(e => console.log("Audio play failed", e));
+            },
+            
+            stopAudio() { if(this.audioEl) { this.audioEl.pause(); this.isPlaying = false; } },
+
+            click_character(idx, type) {
+                this.selectedCharacter = idx;
+                this.changeCam('body');
+                
+                if (this.characters[idx]) {
+                    axios.post("https://qb-multicharacter/cDataPed", { cData: this.characters[idx] });
                 } else {
                     axios.post("https://qb-multicharacter/cDataPed", {});
-                    // For empty slots, immediately show the registration form
                     if (type === "empty") {
-                        this.resetRegisterData();
+                        this.registerData = { date: "", firstname: "", lastname: "", nationality: "", gender: "Male" };
                         this.show.characters = false;
                         this.show.register = true;
                     }
                 }
             },
-            prepareDelete: function () {
-                this.show.characters = false;
-                this.show.delete = true;
+            create_character() {
+                const r = this.registerData;
+                this.show.register = false;
+                this.show.loading = true;
+                this.loadingText = "VERIFYING BIOMETRICS...";
+                this.stopAudio();
+                axios.post("https://qb-multicharacter/createNewCharacter", {
+                    firstname: r.firstname, lastname: r.lastname,
+                    nationality: r.nationality, birthdate: r.date,
+                    gender: r.gender == 'Male' ? 0 : 1, cid: this.selectedCharacter
+                });
+                setTimeout(() => { this.show.loading = false; this.show.characters = false; }, 2000);
             },
-            cancelDelete: function () {
-                this.show.delete = false;
-                this.show.characters = true;
-            },
-            cancelCreate: function () {
+            cancelCreate() {
                 this.show.register = false;
                 this.show.characters = true;
+                this.click_character(this.selectedCharacter, 'existing');
             },
-            delete_character: function () {
-                if (this.show.delete) {
-                    this.show.delete = false;
-                    axios.post("https://qb-multicharacter/removeCharacter", {
-                        citizenid: this.characters[this.selectedCharacter].citizenid,
-                    });
-                    setTimeout(() => {
-                        this.show.characters = true;
-                    }, 500);
+            play_character() {
+                if (this.selectedCharacter !== -1 && this.characters[this.selectedCharacter]) {
+                    this.loadingText = "ESTABLISHING CONNECTION...";
+                    this.show.loading = true;
+                    this.show.characters = false;
+                    this.stopAudio();
+                    axios.post("https://qb-multicharacter/selectCharacter", { cData: this.characters[this.selectedCharacter] });
+                    setTimeout(() => { this.show.loading = false; }, 2000);
                 }
             },
-            play_character: function () {
-                if (this.selectedCharacter !== -1) {
-                    var data = this.characters[this.selectedCharacter];
-
-                    if (data !== undefined) {
-                        axios.post("https://qb-multicharacter/selectCharacter", {
-                            cData: data,
-                        });
-                        setTimeout(() => {
-                            this.show.characters = false;
-                        }, 500);
-                    } else {
-                        this.resetRegisterData();
-                        this.show.characters = false;
-                        this.show.register = true;
-                    }
-                }
+            delete_character_modal() {
+                Swal.fire({
+                    title: 'PERMANENT DELETION', text: "This cannot be undone.", icon: 'warning',
+                    showCancelButton: true, confirmButtonColor: '#d33', confirmButtonText: 'DELETE',
+                    background: '#111', color: '#fff'
+                }).then((r) => { if(r.isConfirmed) this.delete_character(); });
             },
-            resetRegisterData: function () {
-                this.show.characters = false;
-                this.show.register = true;
-                this.registerData = {
-                    date: new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().substr(0, 10),
-                    firstname: undefined,
-                    lastname: undefined,
-                    nationality: undefined,
-                    gender: undefined,
-                };
-            },
-            create_character: function () {
-                const registerData = this.registerData;
-                const validationResult = characterValidator.validateCharacter({
-                    firstname: registerData.firstname,
-                    lastname: registerData.lastname,
-                    nationality: registerData.nationality,
-                    gender: registerData.gender,
-                    date: registerData.date,
-                });
-
-                if (validationResult.isValid) {
-                    this.show.register = false;
-
-                    axios.post("https://qb-multicharacter/createNewCharacter", {
-                        firstname: registerData.firstname,
-                        lastname: registerData.lastname,
-                        nationality: registerData.nationality,
-                        birthdate: registerData.date,
-                        gender: registerData.gender,
-                        cid: this.selectedCharacter,
-                    });
-
-                    setTimeout(() => {
-                        this.show.characters = false;
-                    }, 500);
-                } else {
-                    Swal.fire({
-                        icon: "error",
-                        title: this.translate("ran_into_issue"),
-                        text: this.translate(validationResult.message, { field: this.translate(validationResult.field) }),
-                        timer: 5000,
-                        timerProgressBar: true,
-                        showConfirmButton: false,
-                    });
-                }
-            },
-            translate(key, params) {
-                if (params) {
-                    return translationManager.formatTranslation(key, params);
-                }
-                return translationManager.translate(key);
-            },
+            delete_character() {
+                axios.post("https://qb-multicharacter/removeCharacter", { citizenid: this.characters[this.selectedCharacter].citizenid });
+                this.selectedCharacter = -1;
+            }
         },
         mounted() {
-            initializeValidator();
-            var loadingProgress = 0;
-            var loadingDots = 0;
+            this.initAudio();
             window.addEventListener("message", (event) => {
                 var data = event.data;
-                switch (data.action) {
-                    case "ui":
-                        this.customNationality = event.data.customNationality;
-                        translationManager.setTranslations(event.data.translations);
-                        this.translations = event.data.translations;
-                        this.nationalities = event.data.countries;
-                        this.characterAmount = data.nChar;
-                        this.selectedCharacter = -1;
-                        this.show.register = false;
-                        this.show.delete = false;
-                        this.show.characters = false;
-                        this.allowDelete = event.data.enableDeleteButton;
-                        EnableDeleteButton = data.enableDeleteButton;
+                if (data.action === "openUrl_response") window.open(data.url, '_blank');
 
-                        if (data.toggle) {
-                            this.show.loading = true;
-                            this.loadingText = this.translate("retrieving_playerdata");
-                            var DotsInterval = setInterval(() => {
-                                loadingDots++;
-                                loadingProgress++;
-                                if (loadingProgress == 3) {
-                                    this.loadingText = this.translate("validating_playerdata");
-                                }
-                                if (loadingProgress == 4) {
-                                    this.loadingText = this.translate("retrieving_characters");
-                                }
-                                if (loadingProgress == 6) {
-                                    this.loadingText = this.translate("validating_characters");
-                                }
-                                if (loadingDots == 4) {
-                                    loadingDots = 0;
-                                }
-                            }, 500);
+                if (data.action === "ui") {
+                    this.characterAmount = data.nChar;
+                    this.allowDelete = data.enableDeleteButton;
+                    if(data.weather) this.weather = data.weather;
+                    if(data.time) this.currentTime = data.time;
+                    if(data.myId) this.myId = data.myId;
 
+                    if (data.toggle) {
+                        this.show.loading = true;
+                        this.loadingText = "INITIALIZING VENTURA v0.2...";
+                        if(this.audioEl) { this.audioEl.currentTime = 0; this.audioEl.play().catch(()=>{}); this.isPlaying = true; }
+                        
+                        setTimeout(() => {
+                            axios.post("https://qb-multicharacter/setupCharacters");
                             setTimeout(() => {
-                                axios.post("https://qb-multicharacter/setupCharacters");
-                                setTimeout(() => {
-                                    clearInterval(DotsInterval);
-                                    loadingProgress = 0;
-                                    this.loadingText = this.translate("retrieving_playerdata");
-                                    this.show.loading = false;
-                                    this.show.characters = true;
-                                    axios.post("https://qb-multicharacter/removeBlur");
-                                }, 2000);
-                            }, 2000);
-                        }
-                        break;
-                    case "setupCharacters":
-                        var newChars = [];
-                        for (var i = 0; i < event.data.characters.length; i++) {
-                            newChars[event.data.characters[i].cid] = event.data.characters[i];
-                        }
-                        this.characters = newChars;
-                        break;
-                    case "setupCharInfo":
-                        this.chardata = event.data.chardata;
-                        break;
+                                this.show.loading = false;
+                                this.show.characters = true;
+                                axios.post("https://qb-multicharacter/removeBlur");
+                            }, 1000);
+                        }, 1000);
+                    }
+                } else if (data.action === "setupCharacters") {
+                    var newChars = [];
+                    for (var i = 0; i < event.data.characters.length; i++) {
+                        newChars[event.data.characters[i].cid] = event.data.characters[i];
+                    }
+                    this.characters = newChars;
                 }
             });
-        },
+        }
     });
 });

@@ -33,7 +33,9 @@ files {
     'html/profanity.js',
     'html/translations.js',
     'html/validation.js',
-    'html/app.js'
+    'html/app.js',
+    'html/sounds/music1.mp3',
+    'html/sounds/music2.mp3'
 }
 
 dependencies {
